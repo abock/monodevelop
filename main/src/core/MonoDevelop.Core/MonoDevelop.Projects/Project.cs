@@ -43,7 +43,7 @@ using MonoDevelop.Core.Instrumentation;
 using MonoDevelop.Core.Assemblies;
 using MonoDevelop.Projects.Extensions;
 using System.Collections.Immutable;
-
+using System.Threading;
 
 namespace MonoDevelop.Projects
 {
@@ -303,7 +303,7 @@ namespace MonoDevelop.Projects
 				sourceProject.Save (FileName);
 
 				if (projectBuilder != null)
-					projectBuilder.Refresh ();
+					projectBuilder.Refresh ().Wait ();
 			});
 		}
 
@@ -747,7 +747,7 @@ namespace MonoDevelop.Projects
 		{
 			if (CheckUseMSBuildEngine (configuration)) {
 				LogWriter logWriter = new LogWriter (monitor.Log);
-				RemoteProjectBuilder builder = GetProjectBuilder ();
+				RemoteProjectBuilder builder = await GetProjectBuilder ();
 				var configs = GetConfigurations (configuration);
 
 				string[] evaluateItems = context != null ? context.ItemsToEvaluate.ToArray () : new string[0];
@@ -835,7 +835,7 @@ namespace MonoDevelop.Projects
 			return null;
 		}
 
-		internal ProjectConfigurationInfo[] GetConfigurations (ConfigurationSelector configuration)
+		internal ProjectConfigurationInfo[] GetConfigurations (ConfigurationSelector configuration, bool includeReferencedProjects = true)
 		{
 			// Returns a list of project/configuration information for the provided item and all its references
 			List<ProjectConfigurationInfo> configs = new List<ProjectConfigurationInfo> ();
@@ -847,17 +847,19 @@ namespace MonoDevelop.Projects
 				ProjectGuid = ItemId,
 				Enabled = true
 			});
-			var sc = ParentSolution != null ? ParentSolution.GetConfiguration (configuration) : null;
-			foreach (var refProject in GetReferencedItems (configuration).OfType<Project> ()) {
-				var refConfig = refProject.GetConfiguration (configuration);
-				if (refConfig != null) {
-					configs.Add (new ProjectConfigurationInfo () {
-						ProjectFile = refProject.FileName,
-						Configuration = refConfig.Name,
-						Platform = GetExplicitPlatform (refConfig),
-						ProjectGuid = refProject.ItemId,
-						Enabled = sc == null || sc.BuildEnabledForItem (refProject)
-					});
+			if (includeReferencedProjects) {
+				var sc = ParentSolution != null ? ParentSolution.GetConfiguration (configuration) : null;
+				foreach (var refProject in GetReferencedItems (configuration).OfType<Project> ()) {
+					var refConfig = refProject.GetConfiguration (configuration);
+					if (refConfig != null) {
+						configs.Add (new ProjectConfigurationInfo () {
+							ProjectFile = refProject.FileName,
+							Configuration = refConfig.Name,
+							Platform = GetExplicitPlatform (refConfig),
+							ProjectGuid = refProject.ItemId,
+							Enabled = sc == null || sc.BuildEnabledForItem (refProject)
+						});
+					}
 				}
 			}
 			return configs.ToArray ();
@@ -880,9 +882,9 @@ namespace MonoDevelop.Projects
 		string lastBuildRuntime;
 		string lastFileName;
 		string lastSlnFileName;
-		object builderLock = new object ();
+		AsyncCriticalSection builderLock = new AsyncCriticalSection ();
 
-		internal RemoteProjectBuilder GetProjectBuilder ()
+		internal async Task<RemoteProjectBuilder> GetProjectBuilder ()
 		{
 			//FIXME: we can't really have per-project runtimes, has to be per-solution
 			TargetRuntime runtime = null;
@@ -892,13 +894,13 @@ namespace MonoDevelop.Projects
 			var sln = ParentSolution;
 			var slnFile = sln != null ? sln.FileName : null;
 
-			lock (builderLock) {
+			using (await builderLock.EnterAsync ()) {
 				if (projectBuilder == null || lastBuildToolsVersion != ToolsVersion || lastBuildRuntime != runtime.Id || lastFileName != FileName || lastSlnFileName != slnFile) {
 					if (projectBuilder != null) {
 						projectBuilder.Dispose ();
 						projectBuilder = null;
 					}
-					projectBuilder = MSBuildProjectService.GetProjectBuilder (runtime, ToolsVersion, FileName, slnFile);
+					projectBuilder = await MSBuildProjectService.GetProjectBuilder (runtime, ToolsVersion, FileName, slnFile);
 					projectBuilder.Disconnected += delegate {
 						CleanupProjectBuilder ();
 					};
@@ -910,7 +912,7 @@ namespace MonoDevelop.Projects
 				if (modifiedInMemory) {
 					modifiedInMemory = false;
 					WriteProject (new ProgressMonitor ());
-					projectBuilder.RefreshWithContent (sourceProject.SaveToString ());
+					await projectBuilder.RefreshWithContent (sourceProject.SaveToString ());
 				}
 			}
 			return projectBuilder;
@@ -924,10 +926,12 @@ namespace MonoDevelop.Projects
 			}
 		}
 
-		public void RefreshProjectBuilder ()
+		public Task RefreshProjectBuilder ()
 		{
 			if (projectBuilder != null)
-				projectBuilder.Refresh ();
+				return projectBuilder.Refresh ();
+			else
+				return Task.FromResult (true);
 		}
 
 		public void ReloadProjectBuilder ()
