@@ -106,7 +106,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 
 			if (enabled.HasValue) {
 				enabledCheckBox.Inconsistent = false;
-				enabledCheckBox.Mode = enabled.Value;
+				enabledCheckBox.Active = enabled.Value;
 			} else {
 				enabledCheckBox.Inconsistent = true;
 			}
@@ -140,13 +140,12 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 			//If Inconsistent, don't do anything
 			if (!enabledCheckBox.Inconsistent) {
 				foreach (DotNetProjectConfiguration conf in configurations) {
-					if (enabledCheckBox.Mode) {
+					if (enabledCheckBox.Active) {
 						conf.Properties.SetValue ("RunCodeAnalysis", "true");
 					} else {
 						conf.Properties.RemoveProperty ("RunCodeAnalysis");
 					}
 				}
-				project.SaveAsync (new ProgressMonitor ());
 			}
 		}
 	}
