@@ -47,20 +47,8 @@ namespace UserInterfaceTests
 
 		public static void OpenFile (FilePath file)
 		{
-			Session.GlobalInvoke ("MonoDevelop.Ide.IdeApp.Workbench.OpenDocument", (FilePath) file, true);
-			Assert.AreEqual (file, Ide.GetActiveDocumentFilename ());
-		}
-
-		public static FilePath OpenTestSolution (string solution)
-		{
-			FilePath path = Util.GetSampleProject (solution);
-
-			RunAndWaitForTimer (
-				() => Session.GlobalInvoke ("MonoDevelop.Ide.IdeApp.Workspace.OpenWorkspaceItem", (string)path),
-				"MonoDevelop.Ide.Counters.OpenWorkspaceItemTimer"
-			);
-
-			return path;
+			Session.GlobalInvoke ("MonoDevelop.Ide.IdeApp.Workbench.OpenDocument", (string) file, true);
+			Assert.AreEqual (file, GetActiveDocumentFilename ());
 		}
 
 		public static void CloseAll ()
@@ -91,7 +79,7 @@ namespace UserInterfaceTests
 				Thread.Sleep (pollStep);
 			} while (timeout > 0);
 
-			throw new Exception ("Timed out waiting for event");
+			throw new TimeoutException ("Timed out waiting for Function: "+done.Method.Name);
 		}
 
 		//no saner way to do this

@@ -27,38 +27,113 @@
 using System.IO;
 using NUnit.Framework;
 using MonoDevelop.Components.AutoTest;
+using System;
+using System.Linq;
 
 namespace UserInterfaceTests
 {
 	[TestFixture]
 	public abstract class UITestBase
 	{
+		string projectScreenshotFolder;
+		string currentWorkingDirectory;
+		string ideLogPath;
+		int testScreenshotIndex;
+
+		public string ScreenshotsPath { get; private set; }
+
+		public string CurrentXSIdeLog { get; private set; }
+
 		public AutoTestClientSession Session {
 			get { return TestService.Session; }
 		}
 
 		public string MonoDevelopBinPath { get; set; }
 
-		public UITestBase () {}
+		protected UITestBase () {}
 
-		public UITestBase (string mdBinPath)
+		protected UITestBase (string mdBinPath)
 		{
 			MonoDevelopBinPath = mdBinPath;
+			currentWorkingDirectory = Directory.GetCurrentDirectory ();
+		}
+
+		[TestFixtureSetUp]
+		public virtual void FixtureSetup ()
+		{
+			InitializeScreenShotPath ();
+			ideLogPath = Path.Combine (currentWorkingDirectory, "Idelogs");
+			if (!Directory.Exists (ideLogPath))
+				Directory.CreateDirectory (ideLogPath);
 		}
 
 		[SetUp]
 		public virtual void SetUp ()
 		{
-			Util.ClearTmpDir ();
+			CurrentXSIdeLog = Path.Combine (ideLogPath,string.Format ("{0}.Ide.log", TestContext.CurrentContext.Test.FullName) );
+			Environment.SetEnvironmentVariable ("MONODEVELOP_LOG_FILE", CurrentXSIdeLog);
+			Environment.SetEnvironmentVariable ("MONODEVELOP_FILE_LOG_LEVEL", "All");
 
 			TestService.StartSession (MonoDevelopBinPath);
 			TestService.Session.DebugObject = new UITestDebug ();
+
+			ScreenshotForTestSetup (TestContext.CurrentContext.Test.Name);
 		}
 
 		[TearDown]
 		public virtual void Teardown ()
 		{
+			OnCleanUp ();
 			TestService.EndSession ();
+
+			if (TestContext.CurrentContext.Result.Status == TestStatus.Passed) {
+				if (Directory.Exists (projectScreenshotFolder))
+					Directory.Delete (projectScreenshotFolder, true);
+				File.Delete (CurrentXSIdeLog);
+			}
+		}
+
+		void InitializeScreenShotPath ()
+		{
+			ScreenshotsPath = Path.Combine (currentWorkingDirectory, "Screenshots", GetType ().Name);
+			if (Directory.Exists (ScreenshotsPath)) {
+				var lastAccess = Directory.GetLastAccessTime (ScreenshotsPath).ToString ("u").Replace (' ', '-').Replace (':', '-');
+				var newLocation = string.Format ("{0}-{1}", ScreenshotsPath, lastAccess);
+				Directory.Move (ScreenshotsPath, newLocation);
+			}
+
+			Directory.CreateDirectory (ScreenshotsPath);
+		}
+
+		void ScreenshotForTestSetup (string testName)
+		{
+			testScreenshotIndex = 1;
+			projectScreenshotFolder = Path.Combine (ScreenshotsPath, testName);
+			if (Directory.Exists (projectScreenshotFolder))
+				Directory.Delete (projectScreenshotFolder, true);
+			Directory.CreateDirectory (projectScreenshotFolder);
+		}
+
+		protected void TakeScreenShot (string stepName)
+		{
+			stepName = string.Format ("{0:D3}-{1}", testScreenshotIndex++, stepName);
+			var screenshotPath = Path.Combine (projectScreenshotFolder, stepName) + ".png";
+			Session.TakeScreenshot (screenshotPath);
+		}
+
+		protected virtual void OnCleanUp ()
+		{
+			var actualSolutionDirectory = GetSolutionDirectory ();
+			Ide.CloseAll ();
+			try {
+				if (Directory.Exists (actualSolutionDirectory))
+					Directory.Delete (actualSolutionDirectory, true);
+			} catch (IOException) { }
+		}
+
+		protected string GetSolutionDirectory ()
+		{
+			return Session.GetGlobalValue ("MonoDevelop.Ide.IdeApp.ProjectOperations.CurrentSelectedSolution.RootFolder.BaseDirectory").ToString ();
 		}
 	}
 }
